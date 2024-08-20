@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 from ipaddress import ip_network
-import subprocess, cmd
+import subprocess, re
 
 
 
@@ -16,19 +16,16 @@ class UTILITIES:
     def execute_command(self, cmd):
         """
         Execute a command in the terminal
-        """
-        cmd_output = ""
-        
+        """       
         try:
             cmd_output = subprocess.check_output(cmd, shell=True, stderr = subprocess.STDOUT)
             cmd_output = cmd_output.decode("utf-8")
             cmd_output += (f"\n{self.separator_line}\n")
-        except Exception as e:
-            print (str(e))
-            print (f"Error - cannot execute the command {cmd}")
-        finally:
-            return cmd_output            
-
+            return cmd_output  
+            
+        except subprocess.CalledProcessError as e:
+            print (f"Error - cannot execute the command {cmd}: {e}")
+            return ""
 
 class serviceDTO():
     """
@@ -76,40 +73,29 @@ class HostScan():
         Parse the nmap results
         """
         service_name_list = {}
-        nmap_output = nmap_output.split("\n")
-        for output_line in nmap_output:
+        for output_line in nmap_output.split("\n"):
             output_line = output_line.strip()
-            service_list = []
 
             #if port is open
-            if ("tcp" in output_line) and ("open" in output_line) and not ("Discovered" in output_line):
+            if "tcp" in output_line and "open" in output_line and "Discovered" not in output_line:
                 #Cleanup spaces
-                while " " in output_line:
-                    output_line = output_line.replace("  ", " ")
-                    #Split the line
-                    output_line_split = output_line.split(" ")
-                    service_name = output_line_split[2]
-                    port_number = output_line_split[0]
-                
+                output_line = re.sub('+','',output_line)
+                #Split the line
+                parts = output_line.split(" ")
+                port_number = parts[0]
+                service_name = parts[2]
                 # Get service description
-                    output_line_split_length = len(output_line_split)
-                    end_position = output_line_split_length - 1
-                    current_position = 3
-                    service_description = ""
+                service_description = "".join(parts[3:])
 
-                    while current_position <= end_position:
-                        service_description += " " + output_line_split[current_position]
-                        current_position += 1
-
-                    #Create service Object
-                    service = serviceDTO(port_number, service_name, service_description)
-                    #if the service already exists on a different port get the previously stored details for that service
-                    if service_name in service_name_list:
-                        service_list = service_name_list[service_name]
-                    
-                    service_list.append(service)
-                    print (f"[+] Port Open: {service.port} Service Name: {service.name}")
-                    service_name_list[service_name] = service_list
+                #Create service Object
+                service = serviceDTO(port_number, service_name, service_description)
+                #if the service already exists on a different port get the previously stored details for that service
+                if service_name in service_name_list:
+                    service_name_list[service_name].append(service)
+                else:
+                    service_name_list[service_name] = [service]
+                
+                print (f"[+] Port Open: {service.port} Service Name: {service.name}")
             
         return service_name_list
 
@@ -118,13 +104,14 @@ def validate_input(cidr_input):
     """
     Validate user input - IP Address CIDR format
     """
-    hosts = []
     try:
-        hosts = list(ip_network(cidr_input).hosts())
-    except:
-        print('Invalid input! A valid CIDR IP range.\n example: 192.168.0.0/24')
+        network = ip_network(cidr_input, strict= False)
+        return [str(ip) for ip in network.hosts()]
+
+    except ValueError:
+        print('[i] Invalid input! A valid CIDR IP range.\n example: 192.168.0.0/24')
         return None
-    return hosts        
+    return hosts
         
 
 if __name__ == "__main__":
@@ -134,7 +121,7 @@ if __name__ == "__main__":
     cidr_input = input("IP/CIDR >")
     hosts = validate_input(cidr_input)
 
-    if hosts != None:
+    if hosts is not None:
         print ("[i] Checking for live hosts...")
         LIVE_HOSTS = []
         for host in hosts:
@@ -150,7 +137,15 @@ if __name__ == "__main__":
                 port_scan_results = scanner_live_hosts.port_scan()
                 parsed_nmap_results = scanner_live_hosts.parse_nmap_output(port_scan_results)
 
-                #print (parsed_nmap_results)
-
-
+                # print (parsed_nmap_results)
+                
+                for service_name, services in parsed_nmap_results.items():
+                    print(f"Service: {service_name}")
+                    for service in services:
+                        print(f" Port: {service.port}, Description: {service.description}")
+        else:
+            print("[i] No live hosts found.")
+    else:
+        print("[i] Invalid CIDR Input.")
     
+    print("-------- Bot End --------")
